@@ -93,6 +93,9 @@ services:
       ELASTICSEARCH_HOST: openmetadata-elasticsearch
       ELASTICSEARCH_PORT: ${ELASTICSEARCH_PORT:-9200}
       ELASTICSEARCH_SCHEME: ${ELASTICSEARCH_SCHEME:-http}
+      # Workaround: image openmetadata.yaml default wraps the value in quotes ("no-ssl"),
+      # which fails Jackson enum parsing. Explicit env var overrides the broken default.
+      PIPELINE_SERVICE_CLIENT_VERIFY_SSL: no-ssl
     depends_on:
       openmetadata-mysql:
         condition: service_healthy
