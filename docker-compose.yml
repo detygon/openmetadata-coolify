@@ -123,8 +123,6 @@ services:
 
       # ── JVM heap ─────────────────────────────
       OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx2G -Xms2G}
-    ports:
-      - "8585:8585"
     depends_on:
       openmetadata-mysql:
         condition: service_healthy
