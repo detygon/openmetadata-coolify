@@ -16,6 +16,7 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - openmetadata_mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
              "-u", "root", "--password=${MYSQL_ROOT_PASSWORD}"]
@@ -77,8 +78,8 @@ services:
     command: "./bootstrap/openmetadata-ops.sh migrate"
     environment:
       DB_HOST: openmetadata-mysql
-      DB_USER: root
-      DB_USER_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_USER}
+      DB_USER_PASSWORD: ${MYSQL_PASSWORD}
       OM_DATABASE: openmetadata_db
       ELASTICSEARCH_HOST: openmetadata-elasticsearch
       # Workaround: image openmetadata.yaml default wraps this in quotes ("no-ssl"),
@@ -99,8 +100,8 @@ services:
     environment:
       # ── Database ──────────────────────────────
       DB_HOST: openmetadata-mysql
-      DB_USER: root
-      DB_USER_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_USER}
+      DB_USER_PASSWORD: ${MYSQL_PASSWORD}
       OM_DATABASE: openmetadata_db
 
       # ── Search ────────────────────────────────
@@ -152,8 +153,8 @@ services:
       DB_HOST: openmetadata-mysql
       DB_PORT: "3306"
       AIRFLOW_DB: airflow_db
-      DB_USER: root
-      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
       DB_SCHEME: mysql+mysqldb
       # ── Airflow admin ─────────────────────────
       AIRFLOW_ADMIN_USER: ${AIRFLOW_USERNAME:-admin}
