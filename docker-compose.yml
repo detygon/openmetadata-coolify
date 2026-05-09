@@ -16,7 +16,6 @@ services:
       MYSQL_PASSWORD: ${MYSQL_PASSWORD}
     volumes:
       - openmetadata_mysql_data:/var/lib/mysql
-      - ./mysql-init:/docker-entrypoint-initdb.d:ro
     healthcheck:
       test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
              "-u", "root", "--password=${MYSQL_ROOT_PASSWORD}"]
@@ -55,7 +54,6 @@ services:
 
   # ─────────────────────────────────────────────
   # Elasticsearch setup — creates the vector index
-  # placeholder to silence the health check warning.
   # ─────────────────────────────────────────────
   openmetadata-es-setup:
     image: curlimages/curl:8.7.1
@@ -78,23 +76,13 @@ services:
     image: openmetadata/server:1.12.6
     command: "./bootstrap/openmetadata-ops.sh migrate"
     environment:
-      # ── Database ────────────────────────────────
-      DB_DRIVER_CLASS: ${DB_DRIVER_CLASS:-com.mysql.cj.jdbc.Driver}
-      DB_SCHEME: ${DB_SCHEME:-mysql}
-      DB_PARAMS: ${DB_PARAMS:-allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC}
-      DB_USE_SSL: ${DB_USE_SSL:-false}
       DB_HOST: openmetadata-mysql
-      DB_PORT: ${DB_PORT:-3306}
-      DB_USER: ${MYSQL_USER}
-      DB_USER_PASSWORD: ${MYSQL_PASSWORD}
-      OM_DATABASE: ${OM_DATABASE:-openmetadata_db}
-      # ── Search ──────────────────────────────────
-      SEARCH_TYPE: ${SEARCH_TYPE:-elasticsearch}
+      DB_USER: root
+      DB_USER_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      OM_DATABASE: openmetadata_db
       ELASTICSEARCH_HOST: openmetadata-elasticsearch
-      ELASTICSEARCH_PORT: ${ELASTICSEARCH_PORT:-9200}
-      ELASTICSEARCH_SCHEME: ${ELASTICSEARCH_SCHEME:-http}
-      # Workaround: image openmetadata.yaml default wraps the value in quotes ("no-ssl"),
-      # which fails Jackson enum parsing. Explicit env var overrides the broken default.
+      # Workaround: image openmetadata.yaml default wraps this in quotes ("no-ssl"),
+      # causing Jackson enum parsing to fail. Explicit value overrides the broken default.
       PIPELINE_SERVICE_CLIENT_VERIFY_SSL: no-ssl
     depends_on:
       openmetadata-mysql:
@@ -109,70 +97,25 @@ services:
   openmetadata-server:
     image: openmetadata/server:1.12.6
     environment:
-      # ── Cluster ───────────────────────────────
-      OPENMETADATA_CLUSTER_NAME: ${OPENMETADATA_CLUSTER_NAME:-openmetadata}
-      SERVER_PORT: ${SERVER_PORT:-8585}
-      SERVER_ADMIN_PORT: ${SERVER_ADMIN_PORT:-8586}
-      LOG_LEVEL: ${LOG_LEVEL:-INFO}
-
       # ── Database ──────────────────────────────
-      DB_DRIVER_CLASS: ${DB_DRIVER_CLASS:-com.mysql.cj.jdbc.Driver}
-      DB_SCHEME: ${DB_SCHEME:-mysql}
-      DB_PARAMS: ${DB_PARAMS:-allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC}
-      DB_USE_SSL: ${DB_USE_SSL:-false}
       DB_HOST: openmetadata-mysql
-      DB_PORT: ${DB_PORT:-3306}
-      DB_USER: ${MYSQL_USER}
-      DB_USER_PASSWORD: ${MYSQL_PASSWORD}
-      OM_DATABASE: ${OM_DATABASE:-openmetadata_db}
+      DB_USER: root
+      DB_USER_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      OM_DATABASE: openmetadata_db
 
       # ── Search ────────────────────────────────
-      SEARCH_TYPE: ${SEARCH_TYPE:-elasticsearch}
       ELASTICSEARCH_HOST: openmetadata-elasticsearch
-      ELASTICSEARCH_PORT: ${ELASTICSEARCH_PORT:-9200}
-      ELASTICSEARCH_SCHEME: ${ELASTICSEARCH_SCHEME:-http}
-      ELASTICSEARCH_USER: ${ELASTICSEARCH_USER:-}
-      ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD:-}
-      ELASTICSEARCH_CONNECTION_TIMEOUT_SECS: ${ELASTICSEARCH_CONNECTION_TIMEOUT_SECS:-5}
-      ELASTICSEARCH_SOCKET_TIMEOUT_SECS: ${ELASTICSEARCH_SOCKET_TIMEOUT_SECS:-60}
-      ELASTICSEARCH_KEEP_ALIVE_TIMEOUT_SECS: ${ELASTICSEARCH_KEEP_ALIVE_TIMEOUT_SECS:-600}
-      ELASTICSEARCH_BATCH_SIZE: ${ELASTICSEARCH_BATCH_SIZE:-100}
-      ELASTICSEARCH_PAYLOAD_BYTES_SIZE: ${ELASTICSEARCH_PAYLOAD_BYTES_SIZE:-10485760}
-      ELASTICSEARCH_INDEX_MAPPING_LANG: ${ELASTICSEARCH_INDEX_MAPPING_LANG:-EN}
 
       # ── Auth ──────────────────────────────────
-      AUTHORIZER_CLASS_NAME: ${AUTHORIZER_CLASS_NAME:-org.openmetadata.service.security.DefaultAuthorizer}
-      AUTHORIZER_REQUEST_FILTER: ${AUTHORIZER_REQUEST_FILTER:-org.openmetadata.service.security.JwtFilter}
       AUTHORIZER_ADMIN_PRINCIPALS: ${AUTHORIZER_ADMIN_PRINCIPALS:-[admin]}
-      AUTHORIZER_INGESTION_PRINCIPALS: ${AUTHORIZER_INGESTION_PRINCIPALS:-[ingestion-bot]}
-      AUTHORIZER_PRINCIPAL_DOMAIN: ${AUTHORIZER_PRINCIPAL_DOMAIN:-open-metadata.org}
       AUTHENTICATION_PROVIDER: ${AUTHENTICATION_PROVIDER:-basic}
-      AUTHENTICATION_PUBLIC_KEYS: ${AUTHENTICATION_PUBLIC_KEYS:-[http://localhost:8585/api/v1/system/config/jwks]}
-      AUTHENTICATION_AUTHORITY: ${AUTHENTICATION_AUTHORITY:-https://accounts.google.com}
-      AUTHENTICATION_CLIENT_ID: ${AUTHENTICATION_CLIENT_ID:-}
-      AUTHENTICATION_CALLBACK_URL: ${AUTHENTICATION_CALLBACK_URL:-}
-      AUTHENTICATION_ENABLE_SELF_SIGNUP: ${AUTHENTICATION_ENABLE_SELF_SIGNUP:-true}
-
-      # ── JWT ───────────────────────────────────
-      RSA_PUBLIC_KEY_FILE_PATH: ${RSA_PUBLIC_KEY_FILE_PATH:-./conf/public_key.der}
-      RSA_PRIVATE_KEY_FILE_PATH: ${RSA_PRIVATE_KEY_FILE_PATH:-./conf/private_key.der}
-      JWT_ISSUER: ${JWT_ISSUER:-open-metadata.org}
-      JWT_KEY_ID: ${JWT_KEY_ID:-Gb389a-9f76-gdjs-a92j-0242bk94356}
 
       # ── Pipeline / Airflow ────────────────────
       PIPELINE_SERVICE_CLIENT_ENDPOINT: http://openmetadata-ingestion:8080
-      PIPELINE_SERVICE_CLIENT_CLASS_NAME: ${PIPELINE_SERVICE_CLIENT_CLASS_NAME:-org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient}
-      PIPELINE_SERVICE_CLIENT_HEALTH_CHECK_INTERVAL: ${PIPELINE_SERVICE_CLIENT_HEALTH_CHECK_INTERVAL:-300}
-      PIPELINE_SERVICE_CLIENT_VERIFY_SSL: ${PIPELINE_SERVICE_CLIENT_VERIFY_SSL:-no-ssl}
-      PIPELINE_SERVICE_IP_INFO_ENABLED: ${PIPELINE_SERVICE_IP_INFO_ENABLED:-false}
+      PIPELINE_SERVICE_CLIENT_VERIFY_SSL: no-ssl
       SERVER_HOST_API_URL: http://openmetadata-server:8585/api
       AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-admin}
       AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
-      AIRFLOW_TIMEOUT: ${AIRFLOW_TIMEOUT:-10}
-      FERNET_KEY: ${FERNET_KEY:-jJ/9sz0g0OHxsfxOoSfdFdmk3ysNmPRnH3TUAbz3IHA=}
-
-      # ── Secrets ───────────────────────────────
-      SECRET_MANAGER: ${SECRET_MANAGER:-db}
 
       # ── Server URL (set to your public domain) ─
       OPENMETADATA_SERVER_URL: ${OPENMETADATA_SERVER_URL}
@@ -181,10 +124,6 @@ services:
       OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx2G -Xms2G}
     ports:
       - "8585:8585"
-    expose:
-      - "8586"
-    labels:
-      - coolify.port=8585
     depends_on:
       openmetadata-mysql:
         condition: service_healthy
@@ -201,8 +140,7 @@ services:
     restart: unless-stopped
 
   # ─────────────────────────────────────────────
-  # Ingestion / Airflow 3.x
-  # Uses the official ingestion_dependency.sh
+  # Ingestion / Airflow
   # ─────────────────────────────────────────────
   openmetadata-ingestion:
     image: openmetadata/ingestion:1.12.6
@@ -214,8 +152,8 @@ services:
       DB_HOST: openmetadata-mysql
       DB_PORT: "3306"
       AIRFLOW_DB: airflow_db
-      DB_USER: ${MYSQL_USER}
-      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_USER: root
+      DB_PASSWORD: ${MYSQL_ROOT_PASSWORD}
       DB_SCHEME: mysql+mysqldb
       # ── Airflow admin ─────────────────────────
       AIRFLOW_ADMIN_USER: ${AIRFLOW_USERNAME:-admin}
