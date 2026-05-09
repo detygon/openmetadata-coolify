@@ -1,0 +1,247 @@
+# ═══════════════════════════════════════════════════════════════════
+# OpenMetadata 1.12.x — Coolify Docker Compose
+# ═══════════════════════════════════════════════════════════════════
+
+services:
+
+  # ─────────────────────────────────────────────
+  # MySQL 8 — metadata store
+  # ─────────────────────────────────────────────
+  openmetadata-mysql:
+    image: openmetadata/db:1.12.6
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD}
+      MYSQL_DATABASE: openmetadata_db
+      MYSQL_USER: ${MYSQL_USER}
+      MYSQL_PASSWORD: ${MYSQL_PASSWORD}
+    volumes:
+      - openmetadata_mysql_data:/var/lib/mysql
+      - ./mysql-init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost",
+             "-u", "root", "--password=${MYSQL_ROOT_PASSWORD}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Elasticsearch 7.16 — search & indexing
+  # ─────────────────────────────────────────────
+  openmetadata-elasticsearch:
+    image: docker.elastic.co/elasticsearch/elasticsearch:7.16.3
+    environment:
+      discovery.type: single-node
+      ES_JAVA_OPTS: "-Xms1536m -Xmx1536m"
+      xpack.security.enabled: "false"
+    volumes:
+      - openmetadata_es_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD-SHELL",
+             "curl -sf http://localhost:9200/_cluster/health | grep -vq '\"status\":\"red\"'"]
+      interval: 15s
+      timeout: 10s
+      retries: 10
+      start_period: 30s
+    restart: unless-stopped
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+
+  # ─────────────────────────────────────────────
+  # Elasticsearch setup — creates the vector index
+  # placeholder to silence the health check warning.
+  # ─────────────────────────────────────────────
+  openmetadata-es-setup:
+    image: curlimages/curl:8.7.1
+    depends_on:
+      openmetadata-elasticsearch:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - |
+        curl -sf -X PUT "http://openmetadata-elasticsearch:9200/vector_search_index" \
+          -H "Content-Type: application/json" \
+          -d '{"settings":{"number_of_shards":1,"number_of_replicas":0}}' || true
+    restart: "no"
+
+  # ─────────────────────────────────────────────
+  # DB bootstrap — runs migrations then exits.
+  # ─────────────────────────────────────────────
+  openmetadata-migrate:
+    image: openmetadata/server:1.12.6
+    command: "./bootstrap/openmetadata-ops.sh migrate"
+    environment:
+      # ── Database ────────────────────────────────
+      DB_DRIVER_CLASS: ${DB_DRIVER_CLASS:-com.mysql.cj.jdbc.Driver}
+      DB_SCHEME: ${DB_SCHEME:-mysql}
+      DB_PARAMS: ${DB_PARAMS:-allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC}
+      DB_USE_SSL: ${DB_USE_SSL:-false}
+      DB_HOST: openmetadata-mysql
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${MYSQL_USER}
+      DB_USER_PASSWORD: ${MYSQL_PASSWORD}
+      OM_DATABASE: ${OM_DATABASE:-openmetadata_db}
+      # ── Search ──────────────────────────────────
+      SEARCH_TYPE: ${SEARCH_TYPE:-elasticsearch}
+      ELASTICSEARCH_HOST: openmetadata-elasticsearch
+      ELASTICSEARCH_PORT: ${ELASTICSEARCH_PORT:-9200}
+      ELASTICSEARCH_SCHEME: ${ELASTICSEARCH_SCHEME:-http}
+    depends_on:
+      openmetadata-mysql:
+        condition: service_healthy
+      openmetadata-elasticsearch:
+        condition: service_healthy
+    restart: "no"
+
+  # ─────────────────────────────────────────────
+  # OpenMetadata Server
+  # ─────────────────────────────────────────────
+  openmetadata-server:
+    image: openmetadata/server:1.12.6
+    environment:
+      # ── Cluster ───────────────────────────────
+      OPENMETADATA_CLUSTER_NAME: ${OPENMETADATA_CLUSTER_NAME:-openmetadata}
+      SERVER_PORT: ${SERVER_PORT:-8585}
+      SERVER_ADMIN_PORT: ${SERVER_ADMIN_PORT:-8586}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+      # ── Database ──────────────────────────────
+      DB_DRIVER_CLASS: ${DB_DRIVER_CLASS:-com.mysql.cj.jdbc.Driver}
+      DB_SCHEME: ${DB_SCHEME:-mysql}
+      DB_PARAMS: ${DB_PARAMS:-allowPublicKeyRetrieval=true&useSSL=false&serverTimezone=UTC}
+      DB_USE_SSL: ${DB_USE_SSL:-false}
+      DB_HOST: openmetadata-mysql
+      DB_PORT: ${DB_PORT:-3306}
+      DB_USER: ${MYSQL_USER}
+      DB_USER_PASSWORD: ${MYSQL_PASSWORD}
+      OM_DATABASE: ${OM_DATABASE:-openmetadata_db}
+
+      # ── Search ────────────────────────────────
+      SEARCH_TYPE: ${SEARCH_TYPE:-elasticsearch}
+      ELASTICSEARCH_HOST: openmetadata-elasticsearch
+      ELASTICSEARCH_PORT: ${ELASTICSEARCH_PORT:-9200}
+      ELASTICSEARCH_SCHEME: ${ELASTICSEARCH_SCHEME:-http}
+      ELASTICSEARCH_USER: ${ELASTICSEARCH_USER:-""}
+      ELASTICSEARCH_PASSWORD: ${ELASTICSEARCH_PASSWORD:-""}
+      ELASTICSEARCH_CONNECTION_TIMEOUT_SECS: ${ELASTICSEARCH_CONNECTION_TIMEOUT_SECS:-5}
+      ELASTICSEARCH_SOCKET_TIMEOUT_SECS: ${ELASTICSEARCH_SOCKET_TIMEOUT_SECS:-60}
+      ELASTICSEARCH_KEEP_ALIVE_TIMEOUT_SECS: ${ELASTICSEARCH_KEEP_ALIVE_TIMEOUT_SECS:-600}
+      ELASTICSEARCH_BATCH_SIZE: ${ELASTICSEARCH_BATCH_SIZE:-100}
+      ELASTICSEARCH_PAYLOAD_BYTES_SIZE: ${ELASTICSEARCH_PAYLOAD_BYTES_SIZE:-10485760}
+      ELASTICSEARCH_INDEX_MAPPING_LANG: ${ELASTICSEARCH_INDEX_MAPPING_LANG:-EN}
+
+      # ── Auth ──────────────────────────────────
+      AUTHORIZER_CLASS_NAME: ${AUTHORIZER_CLASS_NAME:-org.openmetadata.service.security.DefaultAuthorizer}
+      AUTHORIZER_REQUEST_FILTER: ${AUTHORIZER_REQUEST_FILTER:-org.openmetadata.service.security.JwtFilter}
+      AUTHORIZER_ADMIN_PRINCIPALS: ${AUTHORIZER_ADMIN_PRINCIPALS:-[admin]}
+      AUTHORIZER_INGESTION_PRINCIPALS: ${AUTHORIZER_INGESTION_PRINCIPALS:-[ingestion-bot]}
+      AUTHORIZER_PRINCIPAL_DOMAIN: ${AUTHORIZER_PRINCIPAL_DOMAIN:-"open-metadata.org"}
+      AUTHENTICATION_PROVIDER: ${AUTHENTICATION_PROVIDER:-basic}
+      AUTHENTICATION_PUBLIC_KEYS: ${AUTHENTICATION_PUBLIC_KEYS:-[http://localhost:8585/api/v1/system/config/jwks]}
+      AUTHENTICATION_AUTHORITY: ${AUTHENTICATION_AUTHORITY:-https://accounts.google.com}
+      AUTHENTICATION_CLIENT_ID: ${AUTHENTICATION_CLIENT_ID:-""}
+      AUTHENTICATION_CALLBACK_URL: ${AUTHENTICATION_CALLBACK_URL:-""}
+      AUTHENTICATION_ENABLE_SELF_SIGNUP: ${AUTHENTICATION_ENABLE_SELF_SIGNUP:-true}
+
+      # ── JWT ───────────────────────────────────
+      RSA_PUBLIC_KEY_FILE_PATH: ${RSA_PUBLIC_KEY_FILE_PATH:-"./conf/public_key.der"}
+      RSA_PRIVATE_KEY_FILE_PATH: ${RSA_PRIVATE_KEY_FILE_PATH:-"./conf/private_key.der"}
+      JWT_ISSUER: ${JWT_ISSUER:-"open-metadata.org"}
+      JWT_KEY_ID: ${JWT_KEY_ID:-"Gb389a-9f76-gdjs-a92j-0242bk94356"}
+
+      # ── Pipeline / Airflow ────────────────────
+      PIPELINE_SERVICE_CLIENT_ENDPOINT: http://openmetadata-ingestion:8080
+      PIPELINE_SERVICE_CLIENT_CLASS_NAME: ${PIPELINE_SERVICE_CLIENT_CLASS_NAME:-"org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient"}
+      PIPELINE_SERVICE_CLIENT_HEALTH_CHECK_INTERVAL: ${PIPELINE_SERVICE_CLIENT_HEALTH_CHECK_INTERVAL:-300}
+      PIPELINE_SERVICE_CLIENT_VERIFY_SSL: ${PIPELINE_SERVICE_CLIENT_VERIFY_SSL:-"no-ssl"}
+      PIPELINE_SERVICE_IP_INFO_ENABLED: ${PIPELINE_SERVICE_IP_INFO_ENABLED:-false}
+      SERVER_HOST_API_URL: http://openmetadata-server:8585/api
+      AIRFLOW_USERNAME: ${AIRFLOW_USERNAME:-admin}
+      AIRFLOW_PASSWORD: ${AIRFLOW_PASSWORD}
+      AIRFLOW_TIMEOUT: ${AIRFLOW_TIMEOUT:-10}
+      FERNET_KEY: ${FERNET_KEY:-jJ/9sz0g0OHxsfxOoSfdFdmk3ysNmPRnH3TUAbz3IHA=}
+
+      # ── Secrets ───────────────────────────────
+      SECRET_MANAGER: ${SECRET_MANAGER:-db}
+
+      # ── Server URL (set to your public domain) ─
+      OPENMETADATA_SERVER_URL: ${OPENMETADATA_SERVER_URL}
+
+      # ── JVM heap ─────────────────────────────
+      OPENMETADATA_HEAP_OPTS: ${OPENMETADATA_HEAP_OPTS:--Xmx2G -Xms2G}
+    ports:
+      - "8585:8585"
+    expose:
+      - "8586"
+    labels:
+      - coolify.port=8585
+    depends_on:
+      openmetadata-mysql:
+        condition: service_healthy
+      openmetadata-elasticsearch:
+        condition: service_healthy
+      openmetadata-migrate:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "wget", "-q", "--spider", "http://localhost:8586/healthcheck"]
+      interval: 30s
+      timeout: 10s
+      retries: 12
+      start_period: 120s
+    restart: unless-stopped
+
+  # ─────────────────────────────────────────────
+  # Ingestion / Airflow 3.x
+  # Uses the official ingestion_dependency.sh
+  # ─────────────────────────────────────────────
+  openmetadata-ingestion:
+    image: openmetadata/ingestion:1.12.6
+    entrypoint: /bin/bash
+    command:
+      - "/opt/airflow/ingestion_dependency.sh"
+    environment:
+      # ── Airflow DB ────────────────────────────
+      DB_HOST: openmetadata-mysql
+      DB_PORT: "3306"
+      AIRFLOW_DB: airflow_db
+      DB_USER: ${MYSQL_USER}
+      DB_PASSWORD: ${MYSQL_PASSWORD}
+      DB_SCHEME: mysql+mysqldb
+      # ── Airflow admin ─────────────────────────
+      AIRFLOW_ADMIN_USER: ${AIRFLOW_USERNAME:-admin}
+      AIRFLOW_ADMIN_PASSWORD: ${AIRFLOW_PASSWORD}
+      # ── Airflow core ──────────────────────────
+      AIRFLOW__API__AUTH_BACKENDS: "airflow.api.auth.backend.basic_auth,airflow.api.auth.backend.session"
+      AIRFLOW__CORE__EXECUTOR: LocalExecutor
+      AIRFLOW__CORE__LOAD_EXAMPLES: "False"
+      AIRFLOW__OPENMETADATA_AIRFLOW_APIS__DAG_GENERATED_CONFIGS: "/opt/airflow/dag_generated_configs"
+      OPENMETADATA_SERVER_HOST_PORT: http://openmetadata-server:8585/api
+    volumes:
+      - openmetadata_dag_configs:/opt/airflow/dag_generated_configs
+      - openmetadata_dag_tmp:/tmp
+    depends_on:
+      openmetadata-mysql:
+        condition: service_healthy
+      openmetadata-server:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD-SHELL",
+             "python3 -c \"import urllib.request; urllib.request.urlopen('http://localhost:8080/api/v1/version', timeout=5)\" 2>/dev/null || exit 1"]
+      interval: 30s
+      timeout: 10s
+      retries: 15
+      start_period: 180s
+    restart: unless-stopped
+
+volumes:
+  openmetadata_mysql_data:
+  openmetadata_es_data:
+  openmetadata_dag_configs:
+  openmetadata_dag_tmp:
